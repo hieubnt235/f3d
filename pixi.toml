@@ -1,0 +1,16 @@
+[workspace]
+authors = ["hieubnt <hieu.buinguyen2352001@gmail.com>"]
+channels = ["conda-forge"]
+name = "f3d"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+config = "emcmake cmake -S . -B build/ && ln -sf build/compile_commands.json ."
+build = "cmake --build build/"
+serve = "emrun build/main.html --no-browser"
+
+[dependencies]
+cmake = ">=4.4.4,<5"
+ninja = ">=1.13.2,<2"
+nodejs = ">=26.10.0,<26.11"

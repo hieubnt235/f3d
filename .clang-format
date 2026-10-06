@@ -1,0 +1,91 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+AccessModifierOffset: 0
+IndentAccessModifiers: true
+
+AlignConsecutiveAssignments:
+    Enabled: true
+    AcrossComments: true
+    AlignCompound: true
+    PadOperators: true
+    AlignFunctionPointers: true
+    AcrossEmptyLines: false
+
+AlignConsecutiveDeclarations:
+    AcrossComments: true
+    AlignCompound: true
+    AlignFunctionPointers: true
+    Enabled: true
+    PadOperators: true
+    AcrossEmptyLines: false
+
+
+AlignOperands: false
+
+AllowAllArgumentsOnNextLine: false
+BinPackArguments: false
+
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackParameters: OnePerLine
+
+
+LambdaBodyIndentation: Signature
+AllowShortLambdasOnASingleLine: All
+AllowShortNamespacesOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseExpressionOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortCompoundRequirementOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+
+
+BreakBeforeBraces: Attach
+#BraceWrapping:
+#    AfterClass: true
+#    AfterControlStatement: true
+#    AfterEnum: true
+#    AfterFunction: true
+#    AfterNamespace: true
+#    AfterObjCDeclaration: true
+#    AfterStruct: true
+#    AfterUnion: true
+#    BeforeCatch: true
+#    BeforeElse: true
+#    BeforeLambdaBody: true
+
+AlignAfterOpenBracket: BlockIndent
+AlignTrailingComments:
+    Kind: Always
+    OverEmptyLines: 2
+
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: Never
+ColumnLimit: 120
+IncludeCategories:
+    -   Regex: '^<.*'
+        Priority: 1
+    -   Regex: '^".*'
+        Priority: 2
+    -   Regex: '.*'
+        Priority: 3
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+IndentCaseBlocks: false
+IndentWidth: 4
+InsertNewlineAtEOF: true
+MacroBlockBegin: ''
+MacroBlockEnd: ''
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: All
+PointerAlignment: Left
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInConditionalStatement: false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+TabWidth: 4
+UseTab: Never
