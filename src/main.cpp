@@ -31,7 +31,7 @@ static void frame() {
     wgpu::CommandEncoderDescriptor ed{.label = "my encoder"};
     wgpu::CommandEncoder           encoder = device.CreateCommandEncoder(&ed);
 
-    // Draw an triangle
+    // Pass 1: Draw an triangle
     {
         // 1. Create shader module
         static constexpr char code[] = {
@@ -96,6 +96,7 @@ static void frame() {
     };
     const auto result_buffer = device.CreateBuffer(&rbd);
 
+    // Pass2: compute x2 elem-wise of vector
     {
         static wgpu::ShaderSourceWGSL wgsl;
         static constexpr char code[] = {
@@ -135,7 +136,92 @@ static void frame() {
         encoder.CopyBufferToBuffer(work_buffer, 0, result_buffer, 0, result_buffer.GetSize());
     }
 
+    // Pass 3: Uniform
+    {
+        // 1. Create render pipeline
+
+        wgpu::ShaderSourceWGSL wgsl;
+        static constexpr char code[] = {
+#embed "shaders/triangle_uniform.wgsl"
+
+        };
+        wgsl.code = std::string_view(code, sizeof(code));
+
+        wgpu::ShaderModuleDescriptor smd{.nextInChain = &wgsl, .label = "shader module"};
+        const auto                   shader_module = device.CreateShaderModule(&smd);
+
+        wgpu::ColorTargetState target{.format = sf_format};
+        wgpu::FragmentState    fs{.module = shader_module, .entryPoint = "fs", .targetCount = 1, .targets = &target};
+        wgpu::RenderPipelineDescriptor render_pd{
+            .label    = "triangle pipeline",
+            .layout   = nullptr,
+            .vertex   = wgpu::VertexState{.module = shader_module, .entryPoint = "vs"},
+            .fragment = &fs
+
+        };
+        auto pipeline = device.CreateRenderPipeline(&render_pd);
+
+        // 2. Create buffer
+
+        /*
+            struct DrawData {
+                color: vec4f,
+                scale: vec2f,
+                offset: vec2f,
+            }
+        */
+        struct DrawData {
+                float color[4];
+                float scale[2];
+                float offset[2];
+        };
+        wgpu::BufferDescriptor bd{
+            .label = "uniform buffer",
+            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            .size  = sizeof(DrawData),
+        };
+        const auto                uniform_buffer = device.CreateBuffer(&bd);
+        static constexpr DrawData data{.color = {0.5, 0.5, 0.5, 0.5}, .scale = {1, 1}, .offset = {0.5, 0.25}};
+        device.GetQueue().WriteBuffer(uniform_buffer, 0, static_cast<const void*>(&data), sizeof(DrawData));
+
+        // 3. Create bindgroup
+
+        wgpu::BindGroupEntry bge{.binding = 0, .buffer = uniform_buffer};
+
+        // Magic about layout and entries:
+        // when device.CreateBindGroup, it compare BindGroupLayoutEntry vs BindGroupEntry, match the binding
+        // attribute, then it check that buffer must contain the usage flag that the layout need (declared with a pair
+        // a, b  in var<a,b> in shader code).
+        // Usage and layout is completely independent declaration set, check when create bind group.
+
+        wgpu::BindGroupDescriptor bgd{
+            .label      = "bind group pass3",
+            .layout     = pipeline.GetBindGroupLayout(0), // Parse the shader to get layout
+            .entryCount = 1,
+            .entries    = &bge
+        };
+        const auto bind_group = device.CreateBindGroup(&bgd);
+
+        // 4. Create render pass
+        wgpu::SurfaceTexture st;
+        surface.GetCurrentTexture(&st);
+        wgpu::RenderPassColorAttachment color{
+            .view       = st.texture.CreateView(),
+            .loadOp     = wgpu::LoadOp::Load,
+            .storeOp    = wgpu::StoreOp::Store,
+            .clearValue = {0.45, 0.55, 0.60, 1.0},
+        };
+        wgpu::RenderPassDescriptor desc{.label = "render pass", .colorAttachmentCount = 1, .colorAttachments = &color};
+        wgpu::RenderPassEncoder    pass = encoder.BeginRenderPass(&desc);
+
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bind_group);
+        pass.Draw(3);
+        pass.End();
+    }
+
     wgpu::CommandBuffer cmd = encoder.Finish();
+    // This should happend few, best practice is to do more work in single command buffer.
     device.GetQueue().Submit(1, &cmd);
 
     auto s = instance.WaitAny(
@@ -151,9 +237,14 @@ static void frame() {
 
     assert(s == wgpu::WaitStatus::Success);
     std::span result(static_cast<const float*>(result_buffer.GetConstMappedRange()), input.size());
-    std::println("input {} result {}", input, result);
+
+    static uint8_t n = 0;
+    if (n < 5) {
+        std::println("input {} result {}", input, result);
+        ++n;
+    }
+
     result_buffer.Unmap();
-    std::println("input {} result {}", input, result);
 }
 
 static void init() {
@@ -201,7 +292,7 @@ int main() {
         UINT64_MAX
     );
     assert(s == wgpu::WaitStatus::Success);
-    s= instance.WaitAny(
+    s = instance.WaitAny(
         adapter.RequestDevice(
             nullptr,
             wgpu::CallbackMode::WaitAnyOnly,
