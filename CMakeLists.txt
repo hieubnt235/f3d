@@ -64,6 +64,7 @@ add_executable(main)
 target_sources(main PRIVATE src/main.cpp)
 target_link_libraries(main PRIVATE emdawnwebgpu sdl3 imgui)
 target_compile_features(main PRIVATE cxx_std_23)
+target_compile_options(main PRIVATE -Wno-c23-extensions)
 
 target_link_options(main PRIVATE "-sJSPI" "$<$<CONFIG:Release>:--closure=1>")
 

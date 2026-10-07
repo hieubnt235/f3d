@@ -34,24 +34,14 @@ static void frame() {
     // Draw an triangle
     {
         // 1. Create shader module
+        static constexpr char code[] = {
+#embed "shaders/render.wgsl"
+
+
+        };
         static wgpu::ShaderSourceWGSL wgsl;
-        wgsl.code = R"(
-        @vertex fn vs(
-            @builtin(vertex_index) vertexIndex : u32
-        ) -> @builtin(position) vec4f {
-            let pos = array(
-                vec2f( 0.0,  0.5),
-                vec2f(-0.5, -0.5),
-                vec2f( 0.5, -0.5)
-            );
+        wgsl.code = std::string_view{code, sizeof(code)};
 
-            return vec4f(pos[vertexIndex], 0.0, 1.0);
-        }
-
-        @fragment fn fs() -> @location(0) vec4f {
-            return vec4f(1.0, 0.0, 0.0, 1.0);
-        }
-    )";
         wgpu::ShaderModuleDescriptor shader_desc{
             .nextInChain = &wgsl,
             .label       = "our hardcoded red triangle shaders",
@@ -107,17 +97,13 @@ static void frame() {
     const auto result_buffer = device.CreateBuffer(&rbd);
 
     {
-        wgpu::ShaderSourceWGSL wgsl;
-        wgsl.code = R"(
-            @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+        static wgpu::ShaderSourceWGSL wgsl;
+        static constexpr char code[] = {
+#embed "shaders/compute.wgsl"
 
-            @compute @workgroup_size(1) fn computeSomething(
-                @builtin(global_invocation_id) id:vec3u
-            ){
-                let i = id.x;
-                data[i] = data[i] * 2.0;
-            }
-        )";
+        };
+        wgsl.code = std::string_view{code, sizeof(code)};
+
         const wgpu::ShaderModuleDescriptor shader_desc{
             .nextInChain = &wgsl,
             .label       = "compute shader",
@@ -152,7 +138,7 @@ static void frame() {
     wgpu::CommandBuffer cmd = encoder.Finish();
     device.GetQueue().Submit(1, &cmd);
 
-    instance.WaitAny(
+    auto s = instance.WaitAny(
         result_buffer.MapAsync(
             wgpu::MapMode::Read,
             0,
@@ -162,9 +148,12 @@ static void frame() {
         ),
         UINT64_MAX
     );
+
+    assert(s == wgpu::WaitStatus::Success);
     std::span result(static_cast<const float*>(result_buffer.GetConstMappedRange()), input.size());
     std::println("input {} result {}", input, result);
     result_buffer.Unmap();
+    std::println("input {} result {}", input, result);
 }
 
 static void init() {
@@ -203,7 +192,7 @@ int main() {
     wgpu::SurfaceDescriptor surface_desc{.nextInChain = &canvas};
     surface = instance.CreateSurface(&surface_desc);
 
-    instance.WaitAny(
+    auto s = instance.WaitAny(
         instance.RequestAdapter(
             nullptr,
             wgpu::CallbackMode::WaitAnyOnly,
@@ -211,7 +200,8 @@ int main() {
         ),
         UINT64_MAX
     );
-    instance.WaitAny(
+    assert(s == wgpu::WaitStatus::Success);
+    s= instance.WaitAny(
         adapter.RequestDevice(
             nullptr,
             wgpu::CallbackMode::WaitAnyOnly,
@@ -219,6 +209,7 @@ int main() {
         ),
         UINT64_MAX
     );
+    assert(s == wgpu::WaitStatus::Success);
     init();
 
     while (true) {

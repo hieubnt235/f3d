@@ -1,0 +1,18 @@
+# Editor-agnostic clangd config for this project. The CompilationDatabase key below
+# is the fix; the nvim side (dotfiles lua/plugins/lsp.lua) passes the equivalent
+# --compile-commands-dir as well, so either one alone is sufficient.
+CompileFlags:
+  # Pin ONE compilation database for every file in this project.
+  #
+  # Without it clangd resolves compile_commands.json from each FILE's own
+  # directory. emscripten's std.cppm lives under the emsdk sysroot, which has no
+  # database above it, so `std` cannot be built -- and since everything does
+  # `import std;`, every module reads as "not found" and the server wedges
+  # (requests come in, no replies go out, CPU pegged).
+  #
+  # Relative to the directory holding THIS file, so it stays portable across
+  # machines and checkouts. Editor-independent: CLion/VSCode/zed read it too.
+  CompilationDatabase: .
+  Remove:
+    - --use-port=*
+    - "@*"
