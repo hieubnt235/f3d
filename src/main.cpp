@@ -5,6 +5,7 @@
 #include <print>
 #include <span>
 #include <webgpu/webgpu_cpp.h>
+#include "SDL3/SDL_video.h"
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_wgpu.h"
@@ -18,182 +19,148 @@ static wgpu::TextureFormat sf_format;
 
 EM_ASYNC_JS(void, wait_next_frame, (), { await new Promise(requestAnimationFrame); });
 
+// 2.1 Uniform Draw data
+/*
+    struct DrawData {
+        color: vec4f,
+        resolution: vec2f,
+    }
+*/
+struct DrawData {
+        alignas(16) float color[4]; // make this align 16 like wgsl vec4f instead of 4 by default
+        float resolution[2];
+        float trans_px[2]    = {0.0, 0.0};
+        float rot_cos_sin[2] = {1.0, 0.0};
+        float scale[2]       = {1.0, 1.0};
+};
+// size is pad so that size = roundup(align of max elem in S, just past last member ), like wgsl
+static_assert(sizeof(DrawData) == 48);
+
 static void frame() {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) ImGui_ImplSDL3_ProcessEvent(&e);
 
-    ImGui_ImplWGPU_NewFrame();
-    ImGui_ImplSDL3_NewFrame();
-    ImGui::NewFrame();
-    ImGui::ShowDemoWindow();
-    ImGui::Render();
-
+    // Create command encoder for this frame
     wgpu::CommandEncoderDescriptor ed{.label = "my encoder"};
     wgpu::CommandEncoder           encoder = device.CreateCommandEncoder(&ed);
 
-    // Pass 1: Draw an triangle
-    {
-        // 1. Create shader module
-        static constexpr char code[] = {
-#embed "shaders/render.wgsl"
-
-
-        };
-        static wgpu::ShaderSourceWGSL wgsl;
-        wgsl.code = std::string_view{code, sizeof(code)};
-
-        wgpu::ShaderModuleDescriptor shader_desc{
-            .nextInChain = &wgsl,
-            .label       = "our hardcoded red triangle shaders",
-        };
-        wgpu::ShaderModule shader = device.CreateShaderModule(&shader_desc);
-
-        // 2. Create pipeline that bind shader module with target
-        wgpu::ColorTargetState         target{.format = sf_format};
-        wgpu::FragmentState            fs{.module = shader, .entryPoint = "fs", .targetCount = 1, .targets = &target};
-        wgpu::RenderPipelineDescriptor pd{
-            .label    = "triangle pipeline",
-            .layout   = nullptr,
-            .vertex   = wgpu::VertexState{.module = shader, .entryPoint = "vs"},
-            .fragment = &fs
-
-        };
-        auto pipeline = device.CreateRenderPipeline(&pd);
-
-        // 3. Create render pass
-        wgpu::SurfaceTexture st;
-        surface.GetCurrentTexture(&st);
-        wgpu::RenderPassColorAttachment color{
-            .view       = st.texture.CreateView(),
-            .loadOp     = wgpu::LoadOp::Clear,
-            .storeOp    = wgpu::StoreOp::Store,
-            .clearValue = {0.45, 0.55, 0.60, 1.0},
-        };
-        wgpu::RenderPassDescriptor desc{.label = "render pass", .colorAttachmentCount = 1, .colorAttachments = &color};
-        wgpu::RenderPassEncoder    pass = encoder.BeginRenderPass(&desc);
-
-        // 4. Encode commands
-        pass.SetPipeline(pipeline);
-        pass.Draw(3);
-        // ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass.Get());
-        pass.End();
-    }
-
-    static std::vector<float>    input{1, 3, 5};
-    auto                         input_byte_size = static_cast<uint64_t>(input.size() * sizeof(float));
-    const wgpu::BufferDescriptor wbd{
-        .label = "work buffer",
-        .usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc | wgpu::BufferUsage::CopyDst,
-        .size  = input_byte_size
+    // Create render pass
+    wgpu::SurfaceTexture st;
+    surface.GetCurrentTexture(&st);
+    wgpu::RenderPassColorAttachment color{
+        .view       = st.texture.CreateView(),
+        .loadOp     = wgpu::LoadOp::Load,
+        .storeOp    = wgpu::StoreOp::Store,
+        .clearValue = {0.45, 0.55, 0.60, 1.0},
     };
-    const auto work_buffer = device.CreateBuffer(&wbd);
-    device.GetQueue().WriteBuffer(work_buffer, 0, input.data(), input_byte_size);
+    wgpu::RenderPassDescriptor desc{.label = "render pass", .colorAttachmentCount = 1, .colorAttachments = &color};
+    wgpu::RenderPassEncoder    pass = encoder.BeginRenderPass(&desc);
 
-    const wgpu::BufferDescriptor rbd{
-        .label = "result buffer",
-        .usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst,
-        .size  = input_byte_size
+    // Create webgpu render data
+    static DrawData data{
+        .color       = {0, 1, 0.5, 0.5},
+        .resolution  = {100, 100},
+        .trans_px    = {0, 0},
+        .rot_cos_sin = {1, 0},
+        .scale       = {1.0, 1.0}
     };
-    const auto result_buffer = device.CreateBuffer(&rbd);
+    using Vertex = std::array<float, 2>;
+    static_assert(sizeof(Vertex) == 8);
+    // F data
+    static constexpr std::array<Vertex, 12> vertex_data{{
+        // left column
+        {0, 0},
+        {30, 0},
+        {0, 150},
+        {30, 150},
 
-    // Pass2: compute x2 elem-wise of vector
-    {
-        static wgpu::ShaderSourceWGSL wgsl;
-        static constexpr char code[] = {
-#embed "shaders/compute.wgsl"
+        // top rung
+        {30, 0},
+        {100, 0},
+        {30, 30},
+        {100, 30},
 
-        };
-        wgsl.code = std::string_view{code, sizeof(code)};
+        // middle rung
+        {30, 60},
+        {70, 60},
+        {30, 90},
+        {70, 90},
+    }};
 
-        const wgpu::ShaderModuleDescriptor shader_desc{
-            .nextInChain = &wgsl,
-            .label       = "compute shader",
-        };
-        const wgpu::ShaderModule              shader = device.CreateShaderModule(&shader_desc);
-        const wgpu::ComputePipelineDescriptor pd{
-            .label   = "compute pipeline",
-            .layout  = nullptr,
-            .compute = wgpu::ComputeState{.module = shader}
-        };
-        auto pipeline = device.CreateComputePipeline(&pd);
+    static constexpr std::array<uint32_t, 18> index_data{
+        // left column
+        0,
+        1,
+        2,
+        2,
+        1,
+        3,
 
-        const wgpu::BindGroupEntry      bge{.binding = 0, .buffer = work_buffer};
-        const wgpu::BindGroupDescriptor bg_desc{
-            .label      = "bindgroup work buffer",
-            .layout     = pipeline.GetBindGroupLayout(0),
-            .entryCount = 1,
-            .entries    = &bge
-        };
-        const auto bind_group = device.CreateBindGroup(&bg_desc);
+        // top rung
+        4,
+        5,
+        6,
+        6,
+        5,
+        7,
 
-        const wgpu::ComputePassDescriptor cpd{.label = "compute pass"};
-        const auto                        pass = encoder.BeginComputePass(&cpd);
-        pass.SetPipeline(pipeline);
-        pass.SetBindGroup(0, bind_group);
-        pass.DispatchWorkgroups(input.size());
-        pass.End();
+        // middle rung
+        8,
+        9,
+        10,
+        10,
+        9,
+        11,
+    };
 
-        encoder.CopyBufferToBuffer(work_buffer, 0, result_buffer, 0, result_buffer.GetSize());
-    }
-
-    // Pass 3: Uniform
+    // Webgpu render pass
     {
         // 1. Create render pipeline
-
-        wgpu::ShaderSourceWGSL wgsl;
+        // 1.1 Shader module
         static constexpr char code[] = {
-#embed "shaders/triangle_uniform.wgsl"
-
+#embed "shaders/3d.wgsl"
         };
+        wgpu::ShaderSourceWGSL wgsl{};
         wgsl.code = std::string_view(code, sizeof(code));
-
         wgpu::ShaderModuleDescriptor smd{.nextInChain = &wgsl, .label = "shader module"};
         const auto                   shader_module = device.CreateShaderModule(&smd);
 
-        wgpu::ColorTargetState target{.format = sf_format};
-        wgpu::FragmentState    fs{.module = shader_module, .entryPoint = "fs", .targetCount = 1, .targets = &target};
-        wgpu::RenderPipelineDescriptor render_pd{
-            .label    = "triangle pipeline",
-            .layout   = nullptr,
-            .vertex   = wgpu::VertexState{.module = shader_module, .entryPoint = "vs"},
-            .fragment = &fs
+        // 1.2 Vertex state
+        wgpu::VertexAttribute    vtx_attr{.format = wgpu::VertexFormat::Float32x2, .offset = 0, .shaderLocation = 0};
+        wgpu::VertexBufferLayout vtx_buffer_layout{
+            .arrayStride    = sizeof(Vertex),
+            .attributeCount = 1,
+            .attributes     = &vtx_attr
+        };
+        wgpu::VertexState
+            vertex_state{.module = shader_module, .entryPoint = "vs", .bufferCount = 1, .buffers = &vtx_buffer_layout};
 
+        // 1.3 Fragment state
+        wgpu::ColorTargetState target{.format = sf_format};
+        wgpu::FragmentState
+            fragment_state{.module = shader_module, .entryPoint = "fs", .targetCount = 1, .targets = &target};
+
+        // 1.3 Create pipeline
+        wgpu::RenderPipelineDescriptor render_pd{
+            .label    = "3d pipeline",
+            .layout   = nullptr, // auto
+            .vertex   = vertex_state,
+            .fragment = &fragment_state
         };
         auto pipeline = device.CreateRenderPipeline(&render_pd);
 
-        // 2. Create buffer
-
-        /*
-            struct DrawData {
-                color: vec4f,
-                scale: vec2f,
-                offset: vec2f,
-            }
-        */
-        struct DrawData {
-                float color[4];
-                float scale[2];
-                float offset[2];
-        };
-        wgpu::BufferDescriptor bd{
+        // 2. Create buffers
+        wgpu::BufferDescriptor draw_data_bd{
             .label = "uniform buffer",
             .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
             .size  = sizeof(DrawData),
         };
-        const auto                uniform_buffer = device.CreateBuffer(&bd);
-        static constexpr DrawData data{.color = {0.5, 0.5, 0.5, 0.5}, .scale = {1, 1}, .offset = {0.5, 0.25}};
-        device.GetQueue().WriteBuffer(uniform_buffer, 0, static_cast<const void*>(&data), sizeof(DrawData));
+        const auto draw_data_buffer = device.CreateBuffer(&draw_data_bd);
+        static int w, h;
+        SDL_GetWindowSizeInPixels(window, &w, &h);
+        data.resolution[0] = static_cast<float>(w);
+        data.resolution[1] = static_cast<float>(h);
+        device.GetQueue().WriteBuffer(draw_data_buffer, 0, static_cast<const void*>(&data), sizeof(DrawData));
 
-        // 3. Create bindgroup
-
-        wgpu::BindGroupEntry bge{.binding = 0, .buffer = uniform_buffer};
-
-        // Magic about layout and entries:
-        // when device.CreateBindGroup, it compare BindGroupLayoutEntry vs BindGroupEntry, match the binding
-        // attribute, then it check that buffer must contain the usage flag that the layout need (declared with a pair
-        // a, b  in var<a,b> in shader code).
-        // Usage and layout is completely independent declaration set, check when create bind group.
-
+        wgpu::BindGroupEntry      bge{.binding = 0, .buffer = draw_data_buffer};
         wgpu::BindGroupDescriptor bgd{
             .label      = "bind group pass3",
             .layout     = pipeline.GetBindGroupLayout(0), // Parse the shader to get layout
@@ -202,49 +169,61 @@ static void frame() {
         };
         const auto bind_group = device.CreateBindGroup(&bgd);
 
-        // 4. Create render pass
-        wgpu::SurfaceTexture st;
-        surface.GetCurrentTexture(&st);
-        wgpu::RenderPassColorAttachment color{
-            .view       = st.texture.CreateView(),
-            .loadOp     = wgpu::LoadOp::Load,
-            .storeOp    = wgpu::StoreOp::Store,
-            .clearValue = {0.45, 0.55, 0.60, 1.0},
+        // 2.2 Vertex + index buffer
+        wgpu::BufferDescriptor vertex_bd{
+            .label = "vertex buffer",
+            .usage = wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst,
+            .size  = sizeof(vertex_data)
         };
-        wgpu::RenderPassDescriptor desc{.label = "render pass", .colorAttachmentCount = 1, .colorAttachments = &color};
-        wgpu::RenderPassEncoder    pass = encoder.BeginRenderPass(&desc);
+        auto vertex_buffer = device.CreateBuffer(&vertex_bd);
+        device.GetQueue().WriteBuffer(vertex_buffer, 0, vertex_data.data(), sizeof(vertex_data));
+
+        wgpu::BufferDescriptor index_bd{
+            .label = "index buffer",
+            .usage = wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst,
+            .size  = sizeof(index_data)
+        };
+        auto index_buffer = device.CreateBuffer(&index_bd);
+        device.GetQueue().WriteBuffer(index_buffer, 0, index_data.data(), sizeof(index_data));
+
+        // 4. Create render pass
 
         pass.SetPipeline(pipeline);
         pass.SetBindGroup(0, bind_group);
-        pass.Draw(3);
-        pass.End();
+        pass.SetVertexBuffer(0, vertex_buffer);
+        pass.SetIndexBuffer(index_buffer, wgpu::IndexFormat::Uint32);
+        pass.DrawIndexed(index_data.size());
     }
 
+    // ImGui render pass
+    {
+        // Poll inputs
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) ImGui_ImplSDL3_ProcessEvent(&e);
+        ImGui_ImplWGPU_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        ImGui::Begin("Controls");
+        ImGui::SliderFloat("translation.x", &data.trans_px[0], 0.0f, 1000.0f);
+        ImGui::SliderFloat("translation.y", &data.trans_px[1], 0.0f, 1000.0f);
+
+        static float ang_deg = 0;
+        ImGui::SliderFloat("rotate.degree", &ang_deg, -360.0f, 360.0f);
+        data.rot_cos_sin[0] = std::cos(ang_deg * 2 * std::numbers::pi / 360);
+        data.rot_cos_sin[1] = std::sin(ang_deg * 2 * std::numbers::pi / 360);
+
+        ImGui::SliderFloat("scale.x", &data.scale[0], -5.0f, 5.0f);
+        ImGui::SliderFloat("scale.y", &data.scale[1], -5.0f, 5.0f);
+
+        ImGui::End();
+        ImGui::Render();
+        ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass.Get());
+    }
+
+    pass.End();
     wgpu::CommandBuffer cmd = encoder.Finish();
     // This should happend few, best practice is to do more work in single command buffer.
     device.GetQueue().Submit(1, &cmd);
-
-    auto s = instance.WaitAny(
-        result_buffer.MapAsync(
-            wgpu::MapMode::Read,
-            0,
-            wgpu::kWholeMapSize,
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::MapAsyncStatus, wgpu::StringView) {}
-        ),
-        UINT64_MAX
-    );
-
-    assert(s == wgpu::WaitStatus::Success);
-    std::span result(static_cast<const float*>(result_buffer.GetConstMappedRange()), input.size());
-
-    static uint8_t n = 0;
-    if (n < 5) {
-        std::println("input {} result {}", input, result);
-        ++n;
-    }
-
-    result_buffer.Unmap();
 }
 
 static void init() {
